@@ -1,4 +1,5 @@
 {
+    TEST
    "false": false,
    "lit_field1": 1,
    "lit_field2": 1,
