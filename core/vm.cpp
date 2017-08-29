@@ -276,10 +276,12 @@ class Stack {
      */
     std::string getName(unsigned from_here, const HeapEntity *e)
     {
+        std::cout << "CHECKING " << std::endl;
         std::string name;
         for (int i = from_here - 1; i >= 0; --i) {
             const auto &f = stack[i];
             for (const auto &pair : f.bindings) {
+                std::cout << i << " !!! " << encode_utf8(pair.first->name) << std::endl;
                 HeapThunk *thunk = pair.second;
                 if (!thunk->filled)
                     continue;
@@ -333,15 +335,26 @@ class Stack {
     {
         std::vector<TraceFrame> stack_trace;
         stack_trace.push_back(TraceFrame(loc));
+        stack_trace.back().name = getName(stack.size(), lastContext());
+
         for (int i = stack.size() - 1; i > 0; --i) {
             const auto &maybe_call = stack[i];
             const auto &maybe_caller = stack[i - 1];
             if (maybe_call.isCall()) {
                 if (maybe_caller.location.isSet() || maybe_caller.location.file.length() > 0)
                     stack_trace.push_back(TraceFrame(maybe_caller.location));
-                assert(maybe_caller.context != nullptr);
-                // Give the last line a name.
-                stack_trace.back().name = getName(i, maybe_caller.context);
+                //assert(maybe_caller.context != nullptr);
+                if (maybe_caller.context != nullptr) {
+                    // Give the last line a name.
+                    // TODO(sbarzowski) actually I'm not sure -1 is always enough
+                    // context is the thing we're executing at the moment
+                    // so we want to get out of it to find a name
+                    std::cout << "FOUND " << getName(i - 1, maybe_caller.context) << " FOR " << maybe_caller.location << std::endl;
+                    stack_trace.back().name = getName(i - 1, maybe_caller.context);
+                } else {
+                    stack_trace.back().name = "NO CONTEXT";
+                }
+
             }
         }
         return RuntimeError(stack_trace, msg);
@@ -377,6 +390,15 @@ class Stack {
         }
     }
 
+    HeapEntity* lastContext() {
+        for (int i = stack.size() - 1; i >= 0; --i) {
+            if (stack[i].isCall()) {
+                return stack[i].context;
+            }
+        }
+        return nullptr;
+    }
+
     /** New call frame. */
     void newCall(const LocationRange &loc, HeapEntity *context, HeapObject *self, unsigned offset,
                  const BindingFrame &up_values)
@@ -384,7 +406,7 @@ class Stack {
         //assert(!context || dynamic_cast<HeapThunk*>(context) || dynamic_cast<HeapClosure*>(context));
         if(stack.size() > 0) {
             top().location = loc;
-            top().context = context;
+            top().context = lastContext();
         }
 
         tailCallTrimStack();
@@ -393,6 +415,7 @@ class Stack {
         }
         stack.emplace_back(FRAME_CALL, LocationRange());
         calls++;
+        top().context = context;
         top().thunkContext = context;
         top().self = self;
         top().offset = offset;
