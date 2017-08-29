@@ -130,7 +130,8 @@ struct Frame {
      * object, function, or thunk value being executed.  If it is a thunk, it is filled
      * with the value when the frame terminates.
      */
-    HeapEntity *context;
+     HeapEntity *context;
+     HeapEntity *thunkContext;
 
     /** The lexically nearest object we are in, or nullptr.  Note
      * that this is not the same as context, because we could be inside a function,
@@ -159,6 +160,7 @@ struct Frame {
           tailCall(false),
           elementId(0),
           context(NULL),
+          thunkContext(NULL),
           self(NULL),
           offset(0)
     {
@@ -173,6 +175,7 @@ struct Frame {
           tailCall(false),
           elementId(0),
           context(NULL),
+          thunkContext(NULL),
           self(NULL),
           offset(0)
     {
@@ -187,6 +190,8 @@ struct Frame {
         heap.markFrom(val2);
         if (context)
             heap.markFrom(context);
+        if (thunkContext)
+            heap.markFrom(thunkContext);
         if (self)
             heap.markFrom(self);
         for (const auto &bind : bindings)
@@ -328,15 +333,15 @@ class Stack {
     {
         std::vector<TraceFrame> stack_trace;
         stack_trace.push_back(TraceFrame(loc));
-        for (int i = stack.size() - 1; i >= 0; --i) {
-            const auto &f = stack[i];
-            if (f.isCall()) {
-                if (f.context != nullptr) {
-                    // Give the last line a name.
-                    stack_trace[stack_trace.size() - 1].name = getName(i, f.context);
-                }
-                if (f.location.isSet() || f.location.file.length() > 0)
-                    stack_trace.push_back(TraceFrame(f.location));
+        for (int i = stack.size() - 1; i > 0; --i) {
+            const auto &maybe_call = stack[i];
+            const auto &maybe_caller = stack[i - 1];
+            if (maybe_call.isCall()) {
+                if (maybe_caller.location.isSet() || maybe_caller.location.file.length() > 0)
+                    stack_trace.push_back(TraceFrame(maybe_caller.location));
+                assert(maybe_caller.context != nullptr);
+                // Give the last line a name.
+                stack_trace.back().name = getName(i, maybe_caller.context);
             }
         }
         return RuntimeError(stack_trace, msg);
@@ -376,13 +381,19 @@ class Stack {
     void newCall(const LocationRange &loc, HeapEntity *context, HeapObject *self, unsigned offset,
                  const BindingFrame &up_values)
     {
+        //assert(!context || dynamic_cast<HeapThunk*>(context) || dynamic_cast<HeapClosure*>(context));
+        if(stack.size() > 0) {
+            top().location = loc;
+            top().context = context;
+        }
+
         tailCallTrimStack();
         if (calls >= limit) {
             throw makeError(loc, "Max stack frames exceeded.");
         }
-        stack.emplace_back(FRAME_CALL, loc);
+        stack.emplace_back(FRAME_CALL, LocationRange());
         calls++;
-        top().context = context;
+        top().thunkContext = context;
         top().self = self;
         top().offset = offset;
         top().bindings = up_values;
@@ -446,6 +457,7 @@ typedef const AST *(Interpreter::*BuiltinFunc)(const LocationRange &loc,
  * mark are removed from the heap.
  */
 class Interpreter {
+public:
     /** The heap. */
     Heap heap;
 
@@ -453,6 +465,7 @@ class Interpreter {
     Value scratch;
 
     /** The stack. */
+
     Stack stack;
 
     /** Used to create ASTs if needed.
@@ -2160,10 +2173,10 @@ class Interpreter {
                 } break;
 
                 case FRAME_CALL: {
-                    if (auto *thunk = dynamic_cast<HeapThunk *>(f.context)) {
+                    if (auto *thunk = dynamic_cast<HeapThunk *>(f.thunkContext)) {
                         // If we called a thunk, cache result.
                         thunk->fill(scratch);
-                    } else if (auto *closure = dynamic_cast<HeapClosure *>(f.context)) {
+                    } else if (auto *closure = dynamic_cast<HeapClosure *>(f.thunkContext)) {
                         if (f.elementId < f.thunks.size()) {
                             // If tailstrict, force thunks
                             HeapThunk *th = f.thunks[f.elementId++];
