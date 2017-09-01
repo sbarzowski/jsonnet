@@ -276,12 +276,12 @@ class Stack {
      */
     std::string getName(unsigned from_here, const HeapEntity *e)
     {
-        std::cout << "CHECKING " << std::endl;
+        //std::cout << "CHECKING " << std::endl;
         std::string name;
         for (int i = from_here - 1; i >= 0; --i) {
             const auto &f = stack[i];
             for (const auto &pair : f.bindings) {
-                std::cout << i << " !!! " << encode_utf8(pair.first->name) << std::endl;
+                //std::cout << i << " !!! " << encode_utf8(pair.first->name) << std::endl;
                 HeapThunk *thunk = pair.second;
                 if (!thunk->filled)
                     continue;
@@ -324,7 +324,7 @@ class Stack {
     {
         for (unsigned i = 0; i < stack.size(); ++i) {
             std::cout << "stack[" << i << "] = " << stack[i].location << " (" << stack[i].kind
-                      << ")" << std::endl;
+                      << ") call: " << stack[i].isCall() << std::endl;
         }
         std::cout << std::endl;
     }
@@ -335,28 +335,38 @@ class Stack {
     {
         std::vector<TraceFrame> stack_trace;
         stack_trace.push_back(TraceFrame(loc));
-        stack_trace.back().name = getName(stack.size(), lastContext());
+        //dump();
+        // We need to look for context below its frame
+        int lastCall = stack.size() - 1;
+        while (!stack[lastCall].isCall()) {
+            --lastCall;
+        }
+        stack_trace.back().name = getName(lastCall, lastContext());
+        //std::cout << "FOUND " << stack_trace.back().name << " FOR " << stack_trace.back().location << std::endl;
 
         for (int i = stack.size() - 1; i > 0; --i) {
             const auto &maybe_call = stack[i];
             const auto &maybe_caller = stack[i - 1];
             if (maybe_call.isCall()) {
-                if (maybe_caller.location.isSet() || maybe_caller.location.file.length() > 0)
+                if (maybe_caller.location.isSet() || maybe_caller.location.file.length() > 0) {
                     stack_trace.push_back(TraceFrame(maybe_caller.location));
-                //assert(maybe_caller.context != nullptr);
-                if (maybe_caller.context != nullptr) {
-                    // Give the last line a name.
-                    // TODO(sbarzowski) actually I'm not sure -1 is always enough
-                    // context is the thing we're executing at the moment
-                    // so we want to get out of it to find a name
-                    std::cout << "FOUND " << getName(i - 1, maybe_caller.context) << " FOR " << maybe_caller.location << std::endl;
-                    stack_trace.back().name = getName(i - 1, maybe_caller.context);
-                } else {
-                    stack_trace.back().name = "NO CONTEXT";
+                    //assert(maybe_caller.context != nullptr);
+                    if (maybe_caller.context != nullptr) {
+                        // Give the last line a name.
+                        // TODO(sbarzowski) actually I'm not sure -1 is always enough
+                        // context is the thing we're executing at the moment
+                        // so we want to get out of it to find a name
+                        // int lastCall = i - 1;
+                        // while (lastCall > 0 && last)
+                        stack_trace.back().name = getName(i - 1, maybe_caller.context);
+                        //std::cout << "FOUND " << stack_trace.back().name << " FOR " << stack_trace.back().location << std::endl;
+                    } else {
+                        stack_trace.back().name = "NO CONTEXT";
+                    }
                 }
-
             }
         }
+        stack_trace.back().name = ""; // Leave top level without context - it's artificial anyway
         return RuntimeError(stack_trace, msg);
     }
 
